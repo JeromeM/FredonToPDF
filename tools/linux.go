@@ -1,36 +1,25 @@
-//go:build linux
-// +build linux
-
 package tools
 
 import (
-	"fmt"
+	"fredon_to_pdf/helper"
 	"os/exec"
-	"path/filepath"
 )
 
-func ProcessFilesLinux(inputDir, outputDir string) {
-	files, err := filepath.Glob(filepath.Join(inputDir, "*.xls"))
+// Struct pour LinuxFileProcessor
+type LinuxFileProcessor struct{}
+
+// Implémentation de la méthode ProcessFile pour Linux
+func (l *LinuxFileProcessor) ProcessFile(inputFile, outputDir string) {
+
+	// Construire la commande LibreOffice
+	cmd := exec.Command("soffice", "--headless", "--convert-to", "pdf", "--outdir", outputDir, inputFile)
+
+	// Exécuter la commande
+	cmd.Stdout = nil
+	cmd.Stderr = nil
+	err := cmd.Run()
 	if err != nil {
-		fmt.Printf("Erreur lors de la lecture des fichiers : %v\n", err)
-		return
+		helper.GFatalLn("Erreur lors de la conversion avec LibreOffice : %v\n", err)
 	}
 
-	for _, file := range files {
-		fmt.Printf("Traitement du fichier : %s\n", file)
-
-		// Construire la commande LibreOffice
-		outputFile := filepath.Join(outputDir, filepath.Base(file)+".pdf")
-		cmd := exec.Command("soffice", "--headless", "--convert-to", "pdf", "--outdir", outputDir, file)
-
-		// Exécuter la commande
-		err := cmd.Run()
-		if err != nil {
-			fmt.Printf("Erreur lors de la conversion avec LibreOffice : %v\n", err)
-		} else {
-			fmt.Printf("PDF généré : %s\n", outputFile)
-		}
-	}
-
-	fmt.Println("Conversion terminée pour Linux.")
 }
