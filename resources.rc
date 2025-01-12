@@ -1,0 +1,37 @@
+#include <winres.h>
+
+1 ICON "res/icon.ico"  // Associe l'icône au fichier exécutable
+
+VS_VERSION_INFO VERSIONINFO
+ FILEVERSION 1,0,0,0  // Version interne (major, minor, build, revision)
+ PRODUCTVERSION 1,0,0,0
+ FILEFLAGSMASK 0x3fL
+#ifdef _DEBUG
+ FILEFLAGS 0x1L  // Indique que c'est une version de débogage
+#else
+ FILEFLAGS 0x0L  // Indique une version finale
+#endif
+ FILEOS 0x40004L  // OS Windows NT
+ FILETYPE 0x1L  // Application exécutive
+ FILESUBTYPE 0x0L
+
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040c04b0"  // Langue et code de page
+        BEGIN
+            VALUE "CompanyName", "EI Jerome Meyer"
+            VALUE "FileDescription", "Transforme les XLS de la SAS Fredon en PDF"
+            VALUE "FileVersion", "1.0.0.0"
+            VALUE "InternalName", "FredonToPDF"
+            VALUE "LegalCopyright", "Copyright � 2025 Jerome Meyer"
+            VALUE "OriginalFilename", "FredonToPDF.exe"
+            VALUE "ProductName", "FredonToPDF"
+            VALUE "ProductVersion", "1.0.0.0"
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x040c, 1200
+    END
+END

@@ -34,6 +34,8 @@ func GWarning(format string, args ...interface{}) {
 
 func GFatal(format string, args ...interface{}) {
 	GLog(fmt.Sprintf(format, args...), "fatal", false)
+	GInfoLn("Appuyez sur une touche pour fermer...")
+	fmt.Scanln()
 	os.Exit(1)
 }
 
@@ -47,6 +49,8 @@ func GWarningLn(format string, args ...interface{}) {
 
 func GFatalLn(format string, args ...interface{}) {
 	GLog(fmt.Sprintf(format, args...), "fatal", true)
+	GInfoLn("Appuyez sur une touche pour fermer...")
+	fmt.Scanln()
 	os.Exit(1)
 }
 

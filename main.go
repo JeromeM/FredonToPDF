@@ -12,6 +12,11 @@ import (
 	"github.com/schollz/progressbar/v3"
 )
 
+var (
+	Version   = "dev"
+	BuildDate = "unknown"
+)
+
 func main() {
 
 	helper.GInfoLn("VINCE'S CUSTOM EXCEL TO PDF CONVERTER")
@@ -79,7 +84,8 @@ func main() {
 		bar.Describe(fmt.Sprintf("[ %s ]", coloredFileName))
 		fileProcessor.ProcessFile(fullFile, cfg.OutputDir)
 
-		pdfFile := filepath.Join(cfg.OutputDir, strings.TrimSuffix(filepath.Base(file), filepath.Ext(file))+".pdf")
+		//pdfFile := filepath.Join(cfg.OutputDir, strings.TrimSuffix(filepath.Base(file), filepath.Ext(file))+".pdf")
+		pdfFile := filepath.Join(cfg.OutputDir, filepath.Base(file)+".pdf")
 		pdfFiles = append(pdfFiles, pdfFile)
 
 		bar.Add(1)
@@ -106,4 +112,8 @@ func main() {
 
 	helper.GBlank()
 	helper.GInfoLn("Opération terminée.")
+
+	helper.GBlank()
+	helper.GInfoLn("Appuyez sur une touche pour fermer...")
+	fmt.Scanln()
 }
