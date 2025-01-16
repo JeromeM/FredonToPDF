@@ -1,111 +1,235 @@
 package tools
 
 import (
+	"context"
 	"fmt"
-	"fredon_to_pdf/helper"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/go-ole/go-ole"
 	"github.com/go-ole/go-ole/oleutil"
 )
 
-// Struct pour WindowsFileProcessor
-type WindowsFileProcessor struct{}
+const (
+	maxRetries       = 3
+	retryDelay       = 2 * time.Second
+	operationTimeout = 30 * time.Second
+)
 
-func initializeCOMWithRetry(retries int, delay time.Duration) (string, error) {
-	var err error
-	for i := 0; i < retries; i++ {
-		err = ole.CoInitializeEx(0, ole.COINIT_MULTITHREADED)
-		if err == nil {
-			return "", nil // Succès
-		}
-
-		fmt.Println(err.Error())
-
-		if err.Error() == "OLE error 0x80010106" { // Erreur COM déjà initialisé
-			return "", nil
-		}
-
-		// Vérifiez si l'erreur est critique ou récupérable
-		if err.Error() != "OLE error 0x80010106" { // 0x80010106 signifie "COM déjà initialisé"
-			return err.Error(), err // Ne pas réessayer pour une erreur critique
-		}
-
-		// Attendre avant de réessayer
-		helper.GWarningLn("Échec de l'initialisation de COM. Réessai dans %v...", delay)
-		ole.CoUninitialize()
-		time.Sleep(delay)
-	}
-
-	// Si toutes les tentatives échouent, renvoyer la dernière erreur
-	return err.Error(), fmt.Errorf("echec de l'initialisation de COM après %d tentatives : %v", retries, err)
+type WindowsFileProcessor struct {
+	initialized bool
 }
 
-// Implémentation de la méthode ProcessFile pour Windows
-func (w *WindowsFileProcessor) ProcessFile(inputFile, outputDir string) {
+func NewWindowsFileProcessor() (*WindowsFileProcessor, error) {
+	processor := &WindowsFileProcessor{}
+	if err := processor.initializeCOM(); err != nil {
+		return nil, fmt.Errorf("erreur d'initialisation COM : %v", err)
+	}
+	return processor, nil
+}
 
-	// Vérifier l'accès au fichier
+func (p *WindowsFileProcessor) ProcessFile(inputFile, outputDir string) error {
+	// Vérification des chemins
+	if err := p.validatePaths(inputFile, outputDir); err != nil {
+		return fmt.Errorf("erreur de validation des chemins : %v", err)
+	}
+
+	// Création du contexte avec timeout
+	ctx, cancel := context.WithTimeout(context.Background(), operationTimeout)
+	defer cancel()
+
+	// Création de l'application Excel avec retries
+	excel, err := p.createExcelApp(ctx)
+	if err != nil {
+		return fmt.Errorf("erreur de création de l'application Excel : %v", err)
+	}
+	defer safeReleaseWithRetry(excel)
+
+	// Configuration de l'application Excel
+	if err := p.configureExcel(excel); err != nil {
+		return fmt.Errorf("erreur de configuration d'Excel : %v", err)
+	}
+
+	// Ouverture du classeur
+	workbook, err := p.openWorkbook(excel, inputFile)
+	if err != nil {
+		return fmt.Errorf("erreur d'ouverture du classeur : %v", err)
+	}
+	defer safeReleaseWithRetry(workbook)
+
+	// Export en PDF
+	if err := p.exportToPDF(workbook, inputFile, outputDir); err != nil {
+		return fmt.Errorf("erreur d'export en PDF : %v", err)
+	}
+
+	// Fermeture du classeur
+	if err := p.closeWorkbook(workbook, excel); err != nil {
+		return fmt.Errorf("erreur de fermeture du classeur : %v", err)
+	}
+
+	return nil
+}
+
+func (p *WindowsFileProcessor) validatePaths(inputFile, outputDir string) error {
+	// Vérification du fichier d'entrée
 	if _, err := os.Stat(inputFile); err != nil {
-		helper.GFatalLn("Erreur : Impossible d'accéder au fichier %s : %v\n", inputFile, err)
-		return
+		return fmt.Errorf("le fichier d'entrée n'existe pas : %v", err)
 	}
 
-	// Vérifier le dossier de sortie
-	if _, err := os.Stat(outputDir); os.IsNotExist(err) {
-		helper.GFatalLn("Erreur : Le dossier de sortie %s n'existe pas.\n", outputDir)
-		return
+	// Vérification du dossier de sortie
+	if _, err := os.Stat(outputDir); err != nil {
+		if os.IsNotExist(err) {
+			if err := os.MkdirAll(outputDir, 0755); err != nil {
+				return fmt.Errorf("impossible de créer le dossier de sortie : %v", err)
+			}
+		} else {
+			return fmt.Errorf("erreur lors de la vérification du dossier de sortie : %v", err)
+		}
 	}
 
-	// Initialiser COM
-	if errStr, err := initializeCOMWithRetry(5, 2*time.Second); err != nil {
-		helper.GFatalLn("Impossible d'initialiser COM : %v - %v\n", err, errStr)
-		return
-	}
-	defer ole.CoUninitialize()
+	return nil
+}
 
-	// Démarrer Excel
-	unknown, err := oleutil.CreateObject("Excel.Application")
+func (p *WindowsFileProcessor) initializeCOM() error {
+	if p.initialized {
+		return nil
+	}
+
+	var lastErr error
+	for i := 0; i < maxRetries; i++ {
+		if err := ole.CoInitializeEx(0, ole.COINIT_MULTITHREADED); err != nil {
+			// Si COM est déjà initialisé, on considère que c'est un succès
+			if err.Error() == "CoInitialize has not been called" {
+				p.initialized = true
+				return nil
+			}
+			lastErr = err
+			time.Sleep(retryDelay)
+			continue
+		}
+		p.initialized = true
+		return nil
+	}
+
+	return fmt.Errorf("échec de l'initialisation COM après %d tentatives : %v", maxRetries, lastErr)
+}
+
+func (p *WindowsFileProcessor) createExcelApp(ctx context.Context) (*ole.IDispatch, error) {
+	var excel *ole.IDispatch
+	var lastErr error
+
+	for i := 0; i < maxRetries; i++ {
+		select {
+		case <-ctx.Done():
+			return nil, fmt.Errorf("timeout lors de la création de l'application Excel")
+		default:
+			unknown, err := oleutil.CreateObject("Excel.Application")
+			if err != nil {
+				lastErr = err
+				time.Sleep(retryDelay)
+				continue
+			}
+
+			excel, err = unknown.QueryInterface(ole.IID_IDispatch)
+			if err != nil {
+				unknown.Release()
+				lastErr = err
+				time.Sleep(retryDelay)
+				continue
+			}
+
+			return excel, nil
+		}
+	}
+
+	return nil, fmt.Errorf("échec de la création de l'application Excel après %d tentatives : %v", maxRetries, lastErr)
+}
+
+func (p *WindowsFileProcessor) configureExcel(excel *ole.IDispatch) error {
+	defer func() {
+		if r := recover(); r != nil {
+			fmt.Printf("Récupération d'une panique lors de la configuration d'Excel : %v\n", r)
+		}
+	}()
+
+	// Configuration silencieuse d'Excel
+	oleutil.MustPutProperty(excel, "Visible", false)
+	oleutil.MustPutProperty(excel, "DisplayAlerts", false)
+
+	return nil
+}
+
+func (p *WindowsFileProcessor) openWorkbook(excel *ole.IDispatch, inputFile string) (*ole.IDispatch, error) {
+	// Convert to absolute path if it's not already
+	absPath, err := filepath.Abs(inputFile)
 	if err != nil {
-		helper.GFatalLn("Erreur : impossible de démarrer Excel : %v\n", err)
-		return
+		return nil, fmt.Errorf("impossible de convertir en chemin absolu : %v", err)
 	}
-	defer unknown.Release()
 
-	excel, err := unknown.QueryInterface(ole.IID_IDispatch)
-	if err != nil {
-		helper.GFatalLn("Erreur : impossible d'interfacer Excel : %v\n", err)
-		return
+	// Convert to UNC path if it's a network drive
+	if strings.HasPrefix(absPath, `J:\`) {
+		absPath = strings.Replace(absPath, `J:\`, `\\localhost\J$\`, 1)
 	}
-	defer excel.Release()
 
-	oleutil.PutProperty(excel, "Visible", false)
+	// Replace backslashes with forward slashes
+	absPath = strings.ReplaceAll(absPath, `\`, `/`)
 
-	// Charger les Workbooks
 	workbooks := oleutil.MustGetProperty(excel, "Workbooks").ToIDispatch()
-	defer workbooks.Release()
+	defer safeReleaseWithRetry(workbooks)
 
-	// Ouvrir le fichier Excel
-	workbook := oleutil.MustCallMethod(workbooks, "Open", inputFile, false, true).ToIDispatch()
-	if workbook == nil {
-		helper.GFatalLn("Erreur : Impossible d'ouvrir le fichier %s. Vérifiez qu'il n'est pas ouvert ailleurs.\n", inputFile)
-		return
-	}
-	defer workbook.Release()
-
-	// Exporter en PDF
-	outputFile, _ := filepath.Abs(filepath.Join(outputDir, filepath.Base(inputFile)+".pdf"))
-	result, _ := oleutil.CallMethod(workbook, "ExportAsFixedFormat", 0, outputFile)
-	if result.Val != 0 { // Vérifie si une erreur est signalée
-		helper.GFatalLn("Erreur lors de l'exportation en PDF : %v\n", result.Val)
-		return
-	}
+	// Try to open with minimal parameters first
+	workbook, err := oleutil.CallMethod(workbooks, "Open", absPath)
 	if err != nil {
-		helper.GFatalLn("Erreur lors de l'exportation en PDF pour %s : %v\n", inputFile, err)
+		// If that fails, try with the full path escaped
+		absPath = strings.ReplaceAll(absPath, `/`, `\`)
+		workbook, err = oleutil.CallMethod(workbooks, "Open", absPath)
+		if err != nil {
+			return nil, fmt.Errorf("impossible d'ouvrir le classeur : %v", err)
+		}
+	}
+
+	return workbook.ToIDispatch(), nil
+}
+
+func (p *WindowsFileProcessor) exportToPDF(workbook *ole.IDispatch, inputFile, outputDir string) error {
+	var lastErr error
+	for i := 0; i < maxRetries; i++ {
+		pdfPath := filepath.Join(outputDir, strings.TrimSuffix(filepath.Base(inputFile), filepath.Ext(inputFile))+".pdf")
+		if _, err := oleutil.CallMethod(workbook, "ExportAsFixedFormat", 0, pdfPath); err != nil {
+			lastErr = err
+			time.Sleep(retryDelay)
+			continue
+		}
+		return nil
+	}
+
+	return fmt.Errorf("échec de l'export PDF après %d tentatives : %v", maxRetries, lastErr)
+}
+
+func (p *WindowsFileProcessor) closeWorkbook(workbook, excel *ole.IDispatch) error {
+	if _, err := oleutil.CallMethod(workbook, "Close", false); err != nil {
+		return fmt.Errorf("impossible de fermer le classeur : %v", err)
+	}
+
+	if _, err := oleutil.CallMethod(excel, "Quit"); err != nil {
+		return fmt.Errorf("impossible de quitter Excel : %v", err)
+	}
+
+	return nil
+}
+
+func safeReleaseWithRetry(dispatch *ole.IDispatch) {
+	if dispatch == nil {
 		return
 	}
 
-	// Fermer le fichier
-	oleutil.MustCallMethod(workbook, "Close", false)
+	for i := 0; i < maxRetries; i++ {
+		refCount := dispatch.Release()
+		if refCount >= 0 {  // A non-negative return value indicates success
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
 }

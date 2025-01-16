@@ -3,65 +3,74 @@ package helper
 import (
 	"archive/zip"
 	"fmt"
+	"fredon_to_pdf/types"
 	"io"
 	"os"
 	"path/filepath"
 	"regexp"
+
+	"github.com/schollz/progressbar/v3"
 )
 
-// Vérifie si un dossier existe, sinon le crée
+// EnsureDirExists vérifie si un dossier existe et le crée si nécessaire
 func EnsureDirExists(dir string) error {
 	if _, err := os.Stat(dir); os.IsNotExist(err) {
-		return os.MkdirAll(dir, 0755)
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			return fmt.Errorf("impossible de créer le dossier %s : %v", dir, err)
+		}
 	}
 	return nil
 }
 
+// SanitizeFilename nettoie un nom de fichier en remplaçant les caractères invalides par des underscores
 func SanitizeFilename(filename string) string {
 	invalidChars := regexp.MustCompile(`[<>:"/\\|?*]`)
 	return invalidChars.ReplaceAllString(filename, "_")
 }
 
-// Fonction pour créer un fichier zip à partir des fichiers PDF
-func CreateZipFile(zipFileName string, files []string) error {
-	zipFile, err := os.Create(zipFileName)
+// CreateZipFile crée un fichier ZIP contenant les fichiers spécifiés
+func CreateZipFile(zipPath string, results []types.ProcessResult, bar *progressbar.ProgressBar) error {
+	// Création du fichier ZIP
+	zipFile, err := os.Create(zipPath)
 	if err != nil {
-		return fmt.Errorf("impossible de créer le fichier zip : %v", err)
+		return fmt.Errorf("impossible de créer le fichier ZIP : %v", err)
 	}
 	defer zipFile.Close()
 
+	// Création du writer ZIP
 	zipWriter := zip.NewWriter(zipFile)
 	defer zipWriter.Close()
 
-	for _, file := range files {
-		err := AddFileToZip(zipWriter, file)
-		if err != nil {
-			return err
+	// Ajout des fichiers au ZIP
+	for _, result := range results {
+		if result.Err != nil {
+			continue
 		}
-	}
 
-	return nil
-}
+		// Ouverture du fichier source
+		file, err := os.Open(result.PdfPath)
+		if err != nil {
+			GWarningLn("Impossible d'ouvrir le fichier %s : %v", result.FileName, err)
+			continue
+		}
 
-// Fonction pour ajouter un fichier au fichier zip
-func AddFileToZip(zipWriter *zip.Writer, file string) error {
-	// Ouvrir le fichier à ajouter
-	fileToZip, err := os.Open(file)
-	if err != nil {
-		return fmt.Errorf("impossible d'ouvrir le fichier pour l'ajouter au zip : %v", err)
-	}
-	defer fileToZip.Close()
+		// Création de l'entrée ZIP
+		writer, err := zipWriter.Create(filepath.Base(result.PdfPath))
+		if err != nil {
+			file.Close()
+			GWarningLn("Impossible de créer l'entrée ZIP pour %s : %v", result.FileName, err)
+			continue
+		}
 
-	// Créer une entrée dans le fichier zip
-	zipEntry, err := zipWriter.Create(filepath.Base(file))
-	if err != nil {
-		return fmt.Errorf("impossible de créer l'entrée zip : %v", err)
-	}
+		// Copie du contenu
+		if _, err := io.Copy(writer, file); err != nil {
+			file.Close()
+			GWarningLn("Impossible de copier le fichier %s dans le ZIP : %v", result.FileName, err)
+			continue
+		}
 
-	// Copier le contenu du fichier dans l'entrée zip
-	_, err = io.Copy(zipEntry, fileToZip)
-	if err != nil {
-		return fmt.Errorf("impossible de copier le contenu du fichier dans le zip : %v", err)
+		file.Close()
+		bar.Add(1)
 	}
 
 	return nil

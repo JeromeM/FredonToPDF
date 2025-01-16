@@ -5,14 +5,16 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/gookit/color"
 )
 
 const logFormat string = "2006-01-02 15:04:05"
 
-var colors = map[string]int8{
-	"info":    32,
-	"warning": 33,
-	"fatal":   31,
+var colors = map[string]func(a ...any) string{
+	"info":    color.FgGreen.Render,
+	"warning": color.FgYellow.Render,
+	"fatal":   color.FgRed.Render,
 }
 
 func GLog(msg string, msgType string, newLine bool) {
@@ -21,7 +23,7 @@ func GLog(msg string, msgType string, newLine bool) {
 	if newLine {
 		nl = "\n"
 	}
-	fmt.Printf("[%s] [ \x1b[%d;1m%s\x1b[0m ] %s%s", dt.Format(logFormat), colors[msgType], strings.ToUpper(msgType), msg, nl)
+	fmt.Printf("[%s] [ %s ] %s%s", dt.Format(logFormat), colors[msgType](strings.ToUpper(msgType)), msg, nl)
 }
 
 func GInfo(format string, args ...interface{}) {

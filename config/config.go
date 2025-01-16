@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"fredon_to_pdf/helper"
 	"os"
+	"path/filepath"
 )
 
 const (
@@ -42,6 +43,13 @@ func (cfg *Config) configure(configFilePath string) *Config {
 		}
 	}
 
+	// Convert ExcelDir to absolute path
+	absExcelDir, err := filepath.Abs(cfg.ExcelDir)
+	if err != nil {
+		helper.GFatalLn("Erreur lors de la conversion du chemin Excel en absolu : %v", err)
+	}
+	cfg.ExcelDir = absExcelDir
+
 	// Demander à l'utilisateur le dossier de sortie (PDF files)
 	if cfg.OutputDir == "" {
 		helper.GInfo("Veuillez entrer le chemin du dossier de sortie des fichiers PDF (ou appuyez sur Entrée pour utiliser '%s') : ", defaultOutputDir)
@@ -51,17 +59,25 @@ func (cfg *Config) configure(configFilePath string) *Config {
 		}
 	}
 
-	// Demander si il veut créer un ZIP
+	// Convert OutputDir to absolute path
+	absOutputDir, err := filepath.Abs(cfg.OutputDir)
+	if err != nil {
+		helper.GFatalLn("Erreur lors de la conversion du chemin de sortie en absolu : %v", err)
+	}
+	cfg.OutputDir = absOutputDir
+
+	// Demander à l'utilisateur s'il souhaite compresser les fichiers PDF
 	if cfg.CompressToZip == "" {
-		helper.GInfo("Voulez-vous créer un fichier ZIP avec les fichiers PDF générés ? (O/n) : ")
+		helper.GInfo("Souhaitez-vous compresser les fichiers PDF en un fichier ZIP ? (O/N, défaut : %s) : ", defaultCompressToZip)
 		fmt.Scanln(&cfg.CompressToZip)
 		if cfg.CompressToZip == "" {
 			cfg.CompressToZip = defaultCompressToZip
 		}
 	}
 
+	// Sauvegarder la configuration
 	if err := saveConfig(cfg, configFilePath); err != nil {
-		helper.GFatalLn("Erreur lors de la sauvegarde de la configuration : %v", err)
+		helper.GWarningLn("Impossible de sauvegarder la configuration : %v", err)
 	}
 
 	return cfg
