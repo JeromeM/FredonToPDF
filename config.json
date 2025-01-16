@@ -1,5 +1,0 @@
-{
-  "excel_dir": "./excel_files",
-  "output_dir": "./pdf_files",
-  "compress_to_zip": "O"
-}

@@ -227,7 +227,7 @@ func safeReleaseWithRetry(dispatch *ole.IDispatch) {
 
 	for i := 0; i < maxRetries; i++ {
 		refCount := dispatch.Release()
-		if refCount >= 0 {  // A non-negative return value indicates success
+		if refCount >= 0 { // A non-negative return value indicates success
 			break
 		}
 		time.Sleep(100 * time.Millisecond)

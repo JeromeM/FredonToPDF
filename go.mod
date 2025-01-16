@@ -1,6 +1,6 @@
 module fredon_to_pdf
 
-go 1.23.4
+go 1.22
 
 require (
 	github.com/go-ole/go-ole v1.3.0
